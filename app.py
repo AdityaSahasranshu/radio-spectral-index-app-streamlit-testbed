@@ -194,28 +194,32 @@ def calculate_spectral_index_workflow():
         
         # Immediate cleanup of raw Map 1 to save RAM
         map1.data = None 
-        # gc is not imported in your script yet, so we skip explicit gc.collect() 
-        # or you must add 'import gc' at the top of your script.
+        gc.collect() # Ensure 'import gc' is at the top of your file
 
         st.write(f"Convolving {map2.name}...")
         # Variable: data2_conv (Final, needed for calculation)
         data2_conv = convolve_to_common(map2, common_beam)
         
-        # Immediate cleanup of raw Map 2
+        # Immediate cleanup of raw Map 2 to save RAM
         map2.data = None
+        
+        # [FIX]: Capture the shape from the convolved data, since map2.data is now None
+        target_shape = data2_conv.shape
 
         # --- B. REGRIDDING ---
         st.write("Regridding Map 1 to Map 2 Grid...")
+        
         # we regrid d1_conv (source) onto map2.wcs (target)
         data1_aligned, footprint = reproject_interp(
             (d1_conv, map1.wcs),
             map2.wcs,
-            shape_out=map2.data.shape,
+            shape_out=target_shape, # <--- FIXED: uses target_shape instead of map2.data.shape
             order=3
         )
         
         # NOW we can safely delete the pre-regrid map
         del d1_conv
+        gc.collect()
 
     # --- C. DIAGNOSTICS (Outside the spinner) ---
     st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
