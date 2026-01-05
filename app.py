@@ -207,8 +207,21 @@ def calculate_spectral_index_workflow():
     sigma_thresh = st.number_input("Enter Sigma Threshold (e.g., 3.0):", min_value=0.0, value=3.0, step=0.5)
     
     # Button to finalize calculation (prevents constant re-calc when changing sigma)
+    # Add a checkbox to sidebar or main area
+    use_mask = st.checkbox("Apply 3-Sigma Masking?", value=True)
+
     if st.button("Calculate Final Map"):
-        mask = (data1_aligned > sigma_thresh*rms_1) & (data2_conv > sigma_thresh*rms_2)
+        if use_mask:
+            # Standard strict masking
+            mask = (data1_aligned > sigma_thresh*rms_1) & (data2_conv > sigma_thresh*rms_2)
+            alpha_map = np.full_like(map2.data, np.nan)
+            alpha_vals = np.log10(S1 / S2) / np.log10(v1 / v2)
+            alpha_map[mask] = alpha_vals
+        else:
+            # DEBUG MODE: No masking, just calculate everywhere
+            st.warning("⚠️ Masking disabled! Output will be noisy.")
+            # Add a tiny constant (1e-6) to avoid DivideByZero errors
+            alpha_map = np.log10((data1_aligned) / (data2_conv + 1e-9)) / np.log10(v1 / v2)
         
         # 6. CALCULATION
         st.write("--- Calculating Alpha ---")
