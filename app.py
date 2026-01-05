@@ -192,39 +192,54 @@ def calculate_spectral_index_workflow():
     st.write("--- Regridding Map 1 to Map 2 Grid ---")
     with st.spinner("Regridding..."):
         data1_aligned, footprint = reproject_interp(
-            # --- 🔍 PASTE THIS DIAGNOSTIC BLOCK HERE ---
-            st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
-            
-            # 1. Check if the maps are just empty space (NaNs)
-            # If 'Percent Empty' is 100%, your maps do not overlap in the sky.
-            nan_1 = np.isnan(d1_aligned).sum()
-            total_pix = d1_aligned.size
-            st.write(f"**Map 1 (Aligned) Empty Pixels:** {nan_1}/{total_pix} ({nan_1/total_pix:.1%})")
-            
-            # 2. Check the Max Flux
-            # LOFAR and VLASS are both bright. If these numbers are tiny (like 1e-10), math failed.
-            max_1 = np.nanmax(d1_aligned)
-            max_2 = np.nanmax(d2_conv)
-            st.write(f"**Map 1 Max Flux:** {max_1:.5e} Jy/beam")
-            st.write(f"**Map 2 Max Flux:** {max_2:.5e} Jy/beam")
-            
-            if nan_1 == total_pix:
-                st.error("🚨 CRITICAL ERROR: Map 1 is 100% empty after regridding. The two FITS files do not cover the same patch of sky.")
-                st.stop()
-            
-            # 3. Quick visual check of the raw data (ignores headers)
-            # This proves if data exists in the array at all
-            st.write("Quick look at raw array data (Map 1 vs Map 2):")
-            cols = st.columns(2)
-            cols[0].image((d1_aligned - np.nanmin(d1_aligned)) / (np.nanmax(d1_aligned) - np.nanmin(d1_aligned)), caption="Map 1 Aligned", clamp=True)
-            cols[1].image((d2_conv - np.nanmin(d2_conv)) / (np.nanmax(d2_conv) - np.nanmin(d2_conv)), caption="Map 2 Convolved", clamp=True)
-        # --- END DIAGNOSTICS ---
             (data1_conv, map1.wcs),
             map2.wcs,
             shape_out=map2.data.shape,
             order=3
         )
+# --- REGRIDDING SECTION (Replace your existing block with this) ---
+        st.write("Regridding...")
+        
+        # 1. Run Reproject (Make sure this ends with a closing parenthesis!)
+        d1_aligned, _ = reproject_interp(
+            (d1_conv, map1.wcs), 
+            map2.wcs, 
+            shape_out=d2_conv.shape, 
+            order=3
+        )  # <--- This ")" is crucial!
+        
+        # 2. Free memory (Important for Streamlit)
+        del d1_conv
+        gc.collect()
 
+        # --- 🔍 DIAGNOSTICS BLOCK (Paste this exactly here) ---
+        st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
+        
+        # Check coordinates (Are maps overlapping?)
+        nan_1 = np.isnan(d1_aligned).sum()
+        total_pix = d1_aligned.size
+        st.write(f"**Map 1 Empty Pixels:** {nan_1}/{total_pix} ({nan_1/total_pix:.1%})")
+        
+        # Check Flux (Is physics working?)
+        max_1 = np.nanmax(d1_aligned)
+        max_2 = np.nanmax(d2_conv)
+        st.write(f"**Map 1 (LOFAR) Max:** {max_1:.5e} Jy/beam")
+        st.write(f"**Map 2 (VLASS) Max:** {max_2:.5e} Jy/beam")
+        
+        # Crash intentionally if maps are empty
+        if nan_1 == total_pix:
+            st.error("🚨 ERROR: Map 1 is 100% empty. The RA/DEC coordinates of your files do not match.")
+            st.stop()
+            
+        # Visual Check
+        cols = st.columns(2)
+        # Normalize for display (ignore NaNs to prevent errors)
+        show_d1 = d1_aligned.copy()
+        show_d1[np.isnan(show_d1)] = np.nanmin(show_d1)
+        
+        cols[0].image(show_d1, caption="LOFAR (Aligned)", clamp=True)
+        cols[1].image(d2_conv, caption="VLASS (Convolved)", clamp=True)
+        # --- END DIAGNOSTICS ---
     # 5. NOISE & MASKING
     rms_1 = mad_std(data1_aligned, ignore_nan=True)
     rms_2 = mad_std(data2_conv, ignore_nan=True)
