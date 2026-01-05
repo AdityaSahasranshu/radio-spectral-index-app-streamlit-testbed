@@ -10,6 +10,7 @@ import os
 import numpy as np
 import warnings
 import tempfile
+import gc
 from astropy.io import fits
 from astropy import units as u
 from astropy.wcs import WCS
@@ -183,68 +184,71 @@ def calculate_spectral_index_workflow():
     
     st.success(f"Common Beam Defined: {common_beam.major.to(u.arcsec):.2f}")
 
-    # 3. CONVOLVE
-    with st.spinner("Convolving Maps..."):
-        data1_conv = convolve_to_common(map1, common_beam)
-        data2_conv = convolve_to_common(map2, common_beam)
+    # 3. & 4. UNIFIED PROCESSING (Convolution + Regridding + Diagnostics)
+    with st.spinner("Processing (Convolving & Regridding)..."):
+        
+        # --- A. CONVOLUTION ---
+        st.write(f"Convolving {map1.name}...")
+        # Variable: d1_conv (Temporary, will be deleted after regrid)
+        d1_conv = convolve_to_common(map1, common_beam)
+        
+        # Immediate cleanup of raw Map 1 to save RAM
+        map1.data = None 
+        # gc is not imported in your script yet, so we skip explicit gc.collect() 
+        # or you must add 'import gc' at the top of your script.
 
-    # 4. REGRIDDING
-    st.write("--- Regridding Map 1 to Map 2 Grid ---")
-    with st.spinner("Regridding..."):
+        st.write(f"Convolving {map2.name}...")
+        # Variable: data2_conv (Final, needed for calculation)
+        data2_conv = convolve_to_common(map2, common_beam)
+        
+        # Immediate cleanup of raw Map 2
+        map2.data = None
+
+        # --- B. REGRIDDING ---
+        st.write("Regridding Map 1 to Map 2 Grid...")
+        # we regrid d1_conv (source) onto map2.wcs (target)
         data1_aligned, footprint = reproject_interp(
-            (data1_conv, map1.wcs),
+            (d1_conv, map1.wcs),
             map2.wcs,
             shape_out=map2.data.shape,
             order=3
         )
-# --- REGRIDDING SECTION (Replace your existing block with this) ---
-        st.write("Regridding...")
         
-        # 1. Run Reproject (Make sure this ends with a closing parenthesis!)
-        d1_aligned, _ = reproject_interp(
-            (d1_conv, map1.wcs), 
-            map2.wcs, 
-            shape_out=d2_conv.shape, 
-            order=3
-        )  # <--- This ")" is crucial!
-        
-        # 2. Free memory (Important for Streamlit)
+        # NOW we can safely delete the pre-regrid map
         del d1_conv
-        gc.collect()
 
-        # --- 🔍 DIAGNOSTICS BLOCK (Paste this exactly here) ---
-        st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
-        
-        # Check coordinates (Are maps overlapping?)
-        nan_1 = np.isnan(d1_aligned).sum()
-        total_pix = d1_aligned.size
-        st.write(f"**Map 1 Empty Pixels:** {nan_1}/{total_pix} ({nan_1/total_pix:.1%})")
-        
-        # Check Flux (Is physics working?)
-        max_1 = np.nanmax(d1_aligned)
-        max_2 = np.nanmax(d2_conv)
-        st.write(f"**Map 1 (LOFAR) Max:** {max_1:.5e} Jy/beam")
-        st.write(f"**Map 2 (VLASS) Max:** {max_2:.5e} Jy/beam")
-        
-        # Crash intentionally if maps are empty
-        if nan_1 == total_pix:
-            st.error("🚨 ERROR: Map 1 is 100% empty. The RA/DEC coordinates of your files do not match.")
-            st.stop()
-            
-        # Visual Check
-        cols = st.columns(2)
-        # Normalize for display (ignore NaNs to prevent errors)
-        show_d1 = d1_aligned.copy()
-        show_d1[np.isnan(show_d1)] = np.nanmin(show_d1)
-        
-        cols[0].image(show_d1, caption="LOFAR (Aligned)", clamp=True)
-        cols[1].image(d2_conv, caption="VLASS (Convolved)", clamp=True)
-        # --- END DIAGNOSTICS ---
-    # 5. NOISE & MASKING
-    rms_1 = mad_std(data1_aligned, ignore_nan=True)
-    rms_2 = mad_std(data2_conv, ignore_nan=True)
-    st.write(f"Map 1 RMS: {rms_1:.4e} | Map 2 RMS: {rms_2:.4e}")
+    # --- C. DIAGNOSTICS (Outside the spinner) ---
+    st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
+    
+    # Check for empty pixels (NaNs)
+    nan_count = np.isnan(data1_aligned).sum()
+    total_pixels = data1_aligned.size
+    
+    st.write(f"**Map 1 (Aligned) Empty Pixels:** {nan_count} / {total_pixels} ({nan_count/total_pixels:.1%})")
+    
+    # Check Flux Values
+    max_1 = np.nanmax(data1_aligned)
+    max_2 = np.nanmax(data2_conv)
+    
+    st.write(f"**Map 1 Max Flux:** {max_1:.5e} Jy/beam")
+    st.write(f"**Map 2 Max Flux:** {max_2:.5e} Jy/beam")
 
+    # Crash if empty
+    if nan_count == total_pixels:
+        st.error("🚨 CRITICAL ERROR: Map 1 is 100% empty. The RA/DEC coordinates of your two FITS files do not overlap.")
+        st.stop()
+
+    # Visual Check
+    st.write("Visual Check of Raw Arrays:")
+    cols = st.columns(2)
+    
+    # Normalize for display (replace NaNs with 0 to prevent error)
+    show_d1 = np.nan_to_num(data1_aligned)
+    show_d2 = np.nan_to_num(data2_conv)
+    
+    cols[0].image(show_d1, caption="Map 1 (Aligned)", clamp=True)
+    cols[1].image(show_d2, caption="Map 2 (Convolved)", clamp=True)
+    # --- END DIAGNOSTICS ---
     # WEB CHANGE: input() -> st.number_input
     sigma_thresh = st.number_input("Enter Sigma Threshold (e.g., 3.0):", min_value=0.0, value=3.0, step=0.5)
     
