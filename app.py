@@ -192,6 +192,33 @@ def calculate_spectral_index_workflow():
     st.write("--- Regridding Map 1 to Map 2 Grid ---")
     with st.spinner("Regridding..."):
         data1_aligned, footprint = reproject_interp(
+            # --- 🔍 PASTE THIS DIAGNOSTIC BLOCK HERE ---
+            st.write("--- 🔍 DIAGNOSTICS (LOFAR vs VLASS) ---")
+            
+            # 1. Check if the maps are just empty space (NaNs)
+            # If 'Percent Empty' is 100%, your maps do not overlap in the sky.
+            nan_1 = np.isnan(d1_aligned).sum()
+            total_pix = d1_aligned.size
+            st.write(f"**Map 1 (Aligned) Empty Pixels:** {nan_1}/{total_pix} ({nan_1/total_pix:.1%})")
+            
+            # 2. Check the Max Flux
+            # LOFAR and VLASS are both bright. If these numbers are tiny (like 1e-10), math failed.
+            max_1 = np.nanmax(d1_aligned)
+            max_2 = np.nanmax(d2_conv)
+            st.write(f"**Map 1 Max Flux:** {max_1:.5e} Jy/beam")
+            st.write(f"**Map 2 Max Flux:** {max_2:.5e} Jy/beam")
+            
+            if nan_1 == total_pix:
+                st.error("🚨 CRITICAL ERROR: Map 1 is 100% empty after regridding. The two FITS files do not cover the same patch of sky.")
+                st.stop()
+            
+            # 3. Quick visual check of the raw data (ignores headers)
+            # This proves if data exists in the array at all
+            st.write("Quick look at raw array data (Map 1 vs Map 2):")
+            cols = st.columns(2)
+            cols[0].image((d1_aligned - np.nanmin(d1_aligned)) / (np.nanmax(d1_aligned) - np.nanmin(d1_aligned)), caption="Map 1 Aligned", clamp=True)
+            cols[1].image((d2_conv - np.nanmin(d2_conv)) / (np.nanmax(d2_conv) - np.nanmin(d2_conv)), caption="Map 2 Convolved", clamp=True)
+        # --- END DIAGNOSTICS ---
             (data1_conv, map1.wcs),
             map2.wcs,
             shape_out=map2.data.shape,
