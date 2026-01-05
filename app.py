@@ -207,21 +207,53 @@ def calculate_spectral_index_workflow():
     sigma_thresh = st.number_input("Enter Sigma Threshold (e.g., 3.0):", min_value=0.0, value=3.0, step=0.5)
     
     # Button to finalize calculation (prevents constant re-calc when changing sigma)
-    # Add a checkbox to sidebar or main area
+    # Checkbox for debugging (Add this before the button)
     use_mask = st.checkbox("Apply 3-Sigma Masking?", value=True)
 
     if st.button("Calculate Final Map"):
+        # Define frequencies (needed for both modes)
+        v1 = map1.freq.to(u.Hz).value
+        v2 = map2.freq.to(u.Hz).value
+        
         if use_mask:
-            # Standard strict masking
+            # --- STANDARD MODE (STRICT MASKING) ---
             mask = (data1_aligned > sigma_thresh*rms_1) & (data2_conv > sigma_thresh*rms_2)
+            
+            # [FIX]: These lines were missing! We must define S1/S2 here.
+            S1 = data1_aligned[mask]
+            S2 = data2_conv[mask]
+            
             alpha_map = np.full_like(map2.data, np.nan)
-            alpha_vals = np.log10(S1 / S2) / np.log10(v1 / v2)
-            alpha_map[mask] = alpha_vals
+            
+            with np.errstate(invalid='ignore', divide='ignore'):
+                # Now S1 and S2 exist, so this math works
+                alpha_vals = np.log10(S1 / S2) / np.log10(v1 / v2)
+                alpha_map[mask] = alpha_vals
+                
         else:
-            # DEBUG MODE: No masking, just calculate everywhere
-            st.warning("⚠️ Masking disabled! Output will be noisy.")
-            # Add a tiny constant (1e-6) to avoid DivideByZero errors
-            alpha_map = np.log10((data1_aligned) / (data2_conv + 1e-9)) / np.log10(v1 / v2)
+            # --- DEBUG MODE (NO MASKING) ---
+            st.warning("⚠️ Masking disabled! Output will show raw math (noisy).")
+            
+            # We use the FULL arrays here, not S1/S2
+            # Added a tiny number (1e-9) to prevent division by zero errors
+            with np.errstate(invalid='ignore', divide='ignore'):
+                alpha_map = np.log10(data1_aligned / (data2_conv + 1e-9)) / np.log10(v1 / v2)
+
+        # --- DISPLAY & DOWNLOAD (Common to both) ---
+        fig, ax = plt.subplots(figsize=(10,5))
+        im = ax.imshow(alpha_map, origin='lower', cmap='jet', vmin=-2.0, vmax=0.5)
+        plt.colorbar(im, label="Spectral Index")
+        st.pyplot(fig)
+        
+        # Download
+        out_header = map2.header.copy()
+        out_header['HISTORY'] = 'Spectral Index Map'
+        # Save to temp path
+        output_path = "/tmp/alpha.fits"
+        fits.writeto(output_path, alpha_map, out_header, overwrite=True)
+        
+        with open(output_path, "rb") as f:
+            st.download_button("Download FITS", f, "spectral_index.fits")
         
         # 6. CALCULATION
         st.write("--- Calculating Alpha ---")
